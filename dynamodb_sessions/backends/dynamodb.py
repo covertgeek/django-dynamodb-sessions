@@ -121,6 +121,7 @@ class SessionStore(SessionBase):
             )
         )
 
+    @newrelic.agent.datastore_trace('DynamoDb', None, 'connection')
     @property
     def table(self):
         return dynamodb_table()
@@ -148,6 +149,7 @@ class SessionStore(SessionBase):
                 newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_size',
                                                     session_size)
                 self.session_bust_warning(session_size)
+                self.response_analyzing(session_size, duration)
                 session_data = self.decode(session_data_response)
                 time_now = timezone.now()
                 time_ten_sec_ahead = time_now + timedelta(seconds=60)
@@ -173,17 +175,20 @@ class SessionStore(SessionBase):
         response = self.table.get_item(
             Key={'session_key': session_key},
             ConsistentRead=ALWAYS_CONSISTENT)
+        duration = time.time() - start_time
         newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_response_exists',
-                                            time.time() - start_time)
+                                            duration)
         if 'Item' in response:
             session_size = len(response['Item'].get('data', ''))
             newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_size_exists',
                                                 session_size)
             self.session_bust_warning(session_size)
+            self.response_analyzing(session_size, duration)
             return True
         else:
             return False
 
+    @newrelic.agent.datastore_trace('DynamoDb', None, 'create')
     def create(self):
         """
         Creates a new entry in DynamoDB. This may or may not actually
@@ -241,11 +246,14 @@ class SessionStore(SessionBase):
             session_size = len(session_data)
             start_time = time.time()
             self.table.update_item(**update_kwargs)
+            duration = time.time() - start_time
+
             newrelic.agent.record_custom_metric('Custom/DynamoDb/update_item_response',
-                                                (time.time() - start_time))
+                                                duration)
             newrelic.agent.record_custom_metric('Custom/DynamoDb/update_item_size',
                                                 session_size)
             self.session_bust_warning(session_size)
+            self.response_analyzing(session_size, duration)
 
         except ClientError as e:
             error_code = e.response['Error']['Code']
@@ -271,6 +279,7 @@ class SessionStore(SessionBase):
         newrelic.agent.record_custom_metric('Custom/DynamoDb/delete_item_response',
                                             (time.time() - start_time))
 
+
     @classmethod
     def clear_expired(cls):
         # Todo figure out a way of filtering with timezone
@@ -288,3 +297,8 @@ class SessionStore(SessionBase):
         if size/1000 >= DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT:
             logger.debug("session_size_warning",
                          session_id=self.session_key, size=size/1000.0)
+
+    def response_analyzing(self, size, duration):
+        if duration / 1000.0 >= 5:
+            newrelic.agent.add_custom_parameter('session_id', self.session_key)
+            newrelic.agent.add_custom_parameter('session_size', size)
