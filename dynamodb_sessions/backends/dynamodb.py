@@ -150,7 +150,7 @@ class SessionStore(SessionBase):
                 newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_size',
                                                     session_size)
                 self.session_bust_warning(session_size)
-                self.response_analyzing(session_size, duration, retry_attempt)
+                self.response_analyzing(session_size, duration, retry_attempt, 'get_item')
                 session_data = self.decode(session_data_response)
                 time_now = timezone.now()
                 time_ten_sec_ahead = time_now + timedelta(seconds=60)
@@ -185,7 +185,7 @@ class SessionStore(SessionBase):
             newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_size_exists',
                                                 session_size)
             self.session_bust_warning(session_size)
-            self.response_analyzing(session_size, duration, retry_attempt)
+            self.response_analyzing(session_size, duration, retry_attempt, 'get_item')
             return True
         else:
             return False
@@ -255,7 +255,7 @@ class SessionStore(SessionBase):
             newrelic.agent.record_custom_metric('Custom/DynamoDb/update_item_size',
                                                 session_size)
             self.session_bust_warning(session_size)
-            self.response_analyzing(session_size, duration, retry_attempt)
+            self.response_analyzing(session_size, duration, retry_attempt, 'update_item')
 
         except ClientError as e:
             error_code = e.response['Error']['Code']
@@ -300,9 +300,10 @@ class SessionStore(SessionBase):
             logger.debug("session_size_warning",
                          session_id=self.session_key, size=size/1000.0)
 
-    def response_analyzing(self, size, duration, retry_attempt):
+    def response_analyzing(self, size, duration, retry_attempt, operation_name):
         if duration * 1000 >= 5:
             newrelic.agent.add_custom_parameter('session_id', self.session_key)
             newrelic.agent.add_custom_parameter('session_size', size)
-            newrelic.agent.add_custom_parameter('session_response_time', duration)
+            newrelic.agent.add_custom_parameter('session_response_time', duration * 1000)
             newrelic.agent.add_custom_parameter('dynamodb_retry_attempt', retry_attempt)
+            newrelic.agent.add_custom_parameter('session_operation_name', operation_name)
