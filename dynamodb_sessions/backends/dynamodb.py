@@ -304,4 +304,5 @@ class SessionStore(SessionBase):
         if duration * 1000 >= 5:
             newrelic.agent.add_custom_parameter('session_id', self.session_key)
             newrelic.agent.add_custom_parameter('session_size', size)
+            newrelic.agent.add_custom_parameter('session_response_time', duration)
             newrelic.agent.add_custom_parameter('dynamodb_retry_attempt', retry_attempt)
