@@ -301,7 +301,7 @@ class SessionStore(SessionBase):
                          session_id=self.session_key, size=size/1000.0)
 
     def response_analyzing(self, size, duration, retry_attempt):
-        if duration / 1000.0 >= 5:
+        if duration * 1000 >= 5:
             newrelic.agent.add_custom_parameter('session_id', self.session_key)
             newrelic.agent.add_custom_parameter('session_size', size)
             newrelic.agent.add_custom_parameter('dynamodb_retry_attempt', retry_attempt)
