@@ -143,6 +143,7 @@ class SessionStore(SessionBase):
                 ConsistentRead=ALWAYS_CONSISTENT)
             duration = time.time() - start_time
             retry_attempt = response['ResponseMetadata']['RetryAttempts']
+            request_id = response['ResponseMetadata']['RequestId']
             newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_response', duration)
             if 'Item' in response:
                 session_data_response = response['Item']['data']
@@ -150,7 +151,8 @@ class SessionStore(SessionBase):
                 newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_size',
                                                     session_size)
                 self.session_bust_warning(session_size)
-                self.response_analyzing(session_size, duration, retry_attempt, 'get_item')
+                self.response_analyzing(session_size, duration, retry_attempt,
+                                        'get_item', request_id)
                 session_data = self.decode(session_data_response)
                 time_now = timezone.now()
                 time_ten_sec_ahead = time_now + timedelta(seconds=60)
@@ -178,6 +180,7 @@ class SessionStore(SessionBase):
             ConsistentRead=ALWAYS_CONSISTENT)
         duration = time.time() - start_time
         retry_attempt = response['ResponseMetadata']['RetryAttempts']
+        request_id = response['ResponseMetadata']['RequestId']
         newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_response_exists',
                                             duration)
         if 'Item' in response:
@@ -185,7 +188,7 @@ class SessionStore(SessionBase):
             newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_size_exists',
                                                 session_size)
             self.session_bust_warning(session_size)
-            self.response_analyzing(session_size, duration, retry_attempt, 'get_item')
+            self.response_analyzing(session_size, duration, retry_attempt, 'get_item', request_id)
             return True
         else:
             return False
@@ -250,12 +253,14 @@ class SessionStore(SessionBase):
             response = self.table.update_item(**update_kwargs)
             duration = time.time() - start_time
             retry_attempt = response['ResponseMetadata']['RetryAttempts']
+            request_id = response['ResponseMetadata']['RequestId']
             newrelic.agent.record_custom_metric('Custom/DynamoDb/update_item_response',
                                                 duration)
             newrelic.agent.record_custom_metric('Custom/DynamoDb/update_item_size',
                                                 session_size)
             self.session_bust_warning(session_size)
-            self.response_analyzing(session_size, duration, retry_attempt, 'update_item')
+            self.response_analyzing(session_size, duration, retry_attempt,
+                                    'update_item', request_id)
 
         except ClientError as e:
             error_code = e.response['Error']['Code']
@@ -300,10 +305,11 @@ class SessionStore(SessionBase):
             logger.debug("session_size_warning",
                          session_id=self.session_key, size=size/1000.0)
 
-    def response_analyzing(self, size, duration, retry_attempt, operation_name):
+    def response_analyzing(self, size, duration, retry_attempt, operation_name, request_id):
         if duration * 1000 >= 5:
             newrelic.agent.add_custom_parameter('session_id', self.session_key)
             newrelic.agent.add_custom_parameter('session_size', size)
             newrelic.agent.add_custom_parameter('session_response_time', duration * 1000)
             newrelic.agent.add_custom_parameter('dynamodb_retry_attempt', retry_attempt)
+            newrelic.agent.add_custom_parameter('dynamodb_request_id', request_id)
             newrelic.agent.add_custom_parameter('session_operation_name', operation_name)
