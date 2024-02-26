@@ -5,17 +5,22 @@ services:
     depends_on:
       - dynamoDb
     environment:
-      - AWS_DEFAULT_REGION=eu-west-1
+      - AWS_DEFAULT_REGION=us-east-2
       - LOCAL_DYNAMODB_SERVER=http://dynamoDb:8000
       - AWS_ACCESS_KEY_ID=anything
       - AWS_SECRET_ACCESS_KEY=anything
     volumes:
       - ./:/usr/src/app
-      - ~/.pypirc:/root/.pypirc
-    command: bash -c "python manage.py test"
-
+      # - ~/.pypirc:/root/.pypirc
+    command: "python manage.py test"
 
   dynamoDb:
-    image: cnadiminti/dynamodb-local:2017-02-16
+    command: "-jar DynamoDBLocal.jar -disableTelemetry -sharedDb -dbPath ./data"
+    image: "amazon/dynamodb-local:latest"
+    environment:
+      - DDB_LOCAL_TELEMETRY=0
     ports:
-      - 8789:8000
+      - "8007:8000"
+    volumes:
+      - "./_data/dynamodb:/home/dynamodblocal/data"
+    working_dir: /home/dynamodblocal

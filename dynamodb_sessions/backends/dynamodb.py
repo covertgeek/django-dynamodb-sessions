@@ -1,44 +1,35 @@
-import newrelic.agent
+import base64
+import logging
+import os
+import sys
 import time
-from structlog import get_logger
+import zlib
+from datetime import timedelta
 
-from django.conf import settings
-from django.contrib.sessions.backends.base import SessionBase, CreateError
-
-from botocore.exceptions import ClientError
 import boto3
 from boto3.dynamodb.conditions import Attr as DynamoConditionAttr
 from botocore.config import Config
-import os
+from botocore.exceptions import ClientError
+from dateutil.parser import parse
+from django.conf import settings
+from django.contrib.sessions.backends.base import CreateError, SessionBase
 from django.utils import timezone
-from datetime import timedelta
-import sys
-import base64
-import zlib
 
-
-TABLE_NAME = getattr(
-    settings, 'DYNAMODB_SESSIONS_TABLE_NAME', 'sessions')
+TABLE_NAME = getattr(settings, "DYNAMODB_SESSIONS_TABLE_NAME", "sessions")
 HASH_ATTRIB_NAME = getattr(
-    settings, 'DYNAMODB_SESSIONS_TABLE_HASH_ATTRIB_NAME', 'session_key')
-ALWAYS_CONSISTENT = getattr(
-    settings, 'DYNAMODB_SESSIONS_ALWAYS_CONSISTENT', True)
-
-USE_LOCAL_DYNAMODB_SERVER = getattr(
-    settings, 'USE_LOCAL_DYNAMODB_SERVER', False)
-BOTO_CORE_CONFIG = getattr(
-    settings, 'BOTO_CORE_CONFIG', None)
-
-READ_CAPACITY_UNITS = getattr(
-    settings, 'DYNAMODB_READ_CAPACITY_UNITS', 123
+    settings, "DYNAMODB_SESSIONS_TABLE_HASH_ATTRIB_NAME", "session_key"
 )
-WRITE_CAPACITY_UNITS = getattr(
-    settings, 'DYNAMODB_WRITE_CAPACITY_UNITS', 123
-)
+ALWAYS_CONSISTENT = getattr(settings, "DYNAMODB_SESSIONS_ALWAYS_CONSISTENT", True)
 
-DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT = getattr(settings,
-                                                 'DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT',
-                                                 500)
+USE_LOCAL_DYNAMODB_SERVER = getattr(settings, "USE_LOCAL_DYNAMODB_SERVER", False)
+BOTO_CORE_CONFIG = getattr(settings, "BOTO_CORE_CONFIG", None)
+
+READ_CAPACITY_UNITS = getattr(settings, "DYNAMODB_READ_CAPACITY_UNITS", 123)
+WRITE_CAPACITY_UNITS = getattr(settings, "DYNAMODB_WRITE_CAPACITY_UNITS", 123)
+
+DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT = getattr(
+    settings, "DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT", 500
+)
 
 # defensive programming if config has been defined
 # make sure it's the correct format.
@@ -50,18 +41,17 @@ if BOTO_CORE_CONFIG:
 _DYNAMODB_CONN = None
 _DYNAMODB_TABLE = None
 
-logger = get_logger(__name__)
-dynamo_kwargs = dict(
-    service_name='dynamodb',
-    config=BOTO_CORE_CONFIG
-)
+logger = logging.getLogger(__name__)
+
+dynamo_kwargs = dict(service_name="dynamodb", config=BOTO_CORE_CONFIG)
 
 if USE_LOCAL_DYNAMODB_SERVER:
-    local_dynamodb_server = 'LOCAL_DYNAMODB_SERVER'
-    assert os.environ.get(local_dynamodb_server), \
-        "If USE_LOCAL_DYNAMODB_SERVER is set to true define " \
+    local_dynamodb_server = "LOCAL_DYNAMODB_SERVER"
+    assert os.environ.get(local_dynamodb_server), (
+        "If USE_LOCAL_DYNAMODB_SERVER is set to true define "
         "LOCAL_DYNAMODB_SERVER in the environment"
-    dynamo_kwargs['endpoint_url'] = os.environ[local_dynamodb_server]
+    )
+    dynamo_kwargs["endpoint_url"] = os.environ[local_dynamodb_server]
 
 
 def dynamodb_connection_factory(low_level=False):
@@ -106,27 +96,15 @@ class SessionStore(SessionBase):
         :param session_dict:
         :return:
         """
-        return base64.b64encode(
-                zlib.compress(
-                    self.serializer().dumps(session_dict)
-                )
-            )
+        return base64.b64encode(zlib.compress(self.serializer().dumps(session_dict)))
 
     def decode(self, session_data):
-        return self.serializer().loads(
-            zlib.decompress(
-                base64.b64decode(
-                    session_data
-                )
-            )
-        )
+        return self.serializer().loads(zlib.decompress(base64.b64decode(session_data)))
 
-    @newrelic.agent.datastore_trace('DynamoDb', None, 'connection')
     @property
     def table(self):
         return dynamodb_table()
 
-    @newrelic.agent.datastore_trace('DynamoDb', None, 'load')
     def load(self):
         """
         Loads session data from DynamoDB, runs it through the session
@@ -139,31 +117,38 @@ class SessionStore(SessionBase):
         if self.session_key is not None:
             start_time = time.time()
             response = self.table.get_item(
-                Key={'session_key': self.session_key},
-                ConsistentRead=ALWAYS_CONSISTENT)
+                Key={"session_key": self.session_key}, ConsistentRead=ALWAYS_CONSISTENT
+            )
             duration = time.time() - start_time
-            retry_attempt = response['ResponseMetadata']['RetryAttempts']
-            request_id = response['ResponseMetadata']['RequestId']
-            newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_response', duration)
-            if 'Item' in response:
-                session_data_response = response['Item']['data']
+            retry_attempt = response["ResponseMetadata"]["RetryAttempts"]
+            request_id = response["ResponseMetadata"]["RequestId"]
+            if "Item" in response:
+                session_data_response = response["Item"]["data"].value
                 session_size = len(session_data_response)
-                newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_size',
-                                                    session_size)
                 self.session_bust_warning(session_size)
-                self.response_analyzing(session_size, duration, retry_attempt,
-                                        'get_item', request_id)
+                self.response_analyzing(
+                    session_size, duration, retry_attempt, "get_item", request_id
+                )
                 session_data = self.decode(session_data_response)
                 time_now = timezone.now()
                 time_ten_sec_ahead = time_now + timedelta(seconds=60)
-                if time_now < session_data.get('_session_expiry',
-                                               time_ten_sec_ahead):
-                    return session_data
+                expiry = session_data.get("_session_expiry", time_ten_sec_ahead)
+
+                try:
+                    if isinstance(expiry, str):
+                        expiry = parse(expiry)
+                    if time_now < expiry:
+                        return session_data
+                except TypeError:
+                    # If this happens, don't return a valid session.
+                    logger.error(
+                        "Error parsing expiry date for session_key: %s",
+                        self.session_key,
+                    )
 
         self._session_key = None
         return {}
 
-    @newrelic.agent.datastore_trace('DynamoDb', None, 'exists')
     def exists(self, session_key):
         """
         Checks to see if a session currently exists in DynamoDB.
@@ -176,24 +161,22 @@ class SessionStore(SessionBase):
             return False
         start_time = time.time()
         response = self.table.get_item(
-            Key={'session_key': session_key},
-            ConsistentRead=ALWAYS_CONSISTENT)
+            Key={"session_key": session_key}, ConsistentRead=ALWAYS_CONSISTENT
+        )
         duration = time.time() - start_time
-        retry_attempt = response['ResponseMetadata']['RetryAttempts']
-        request_id = response['ResponseMetadata']['RequestId']
-        newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_response_exists',
-                                            duration)
-        if 'Item' in response:
-            session_size = len(response['Item'].get('data', ''))
-            newrelic.agent.record_custom_metric('Custom/DynamoDb/get_item_size_exists',
-                                                session_size)
+        retry_attempt = response["ResponseMetadata"]["RetryAttempts"]
+        request_id = response["ResponseMetadata"]["RequestId"]
+        if "Item" in response:
+            # print(dir(response["Item"]["data"]))
+            session_size = len(response["Item"].get("data").value)
             self.session_bust_warning(session_size)
-            self.response_analyzing(session_size, duration, retry_attempt, 'get_item', request_id)
+            self.response_analyzing(
+                session_size, duration, retry_attempt, "get_item", request_id
+            )
             return True
         else:
             return False
 
-    @newrelic.agent.datastore_trace('DynamoDb', None, 'create')
     def create(self):
         """
         Creates a new entry in DynamoDB. This may or may not actually
@@ -211,7 +194,6 @@ class SessionStore(SessionBase):
             self.modified = True
             return
 
-    @newrelic.agent.datastore_trace('DynamoDb', None, 'save')
     def save(self, must_create=False):
         """
         Saves the current session data to the database.
@@ -227,48 +209,45 @@ class SessionStore(SessionBase):
             return self.create()
 
         update_kwargs = {
-            'Key': {'session_key': self.session_key},
+            "Key": {"session_key": self.session_key},
         }
 
-        attribute_names = {'#data': 'data', '#ttl': 'ttl'}
+        attribute_names = {"#data": "data", "#ttl": "ttl"}
         session_data = self.encode(self._get_session(no_load=must_create))
         attribute_values = {
-            ':data': session_data,
-            ':ttl': int(time.time() + self.get_expiry_age())
+            ":data": session_data,
+            ":ttl": int(time.time() + self.get_expiry_age()),
         }
-        set_updates = ['#data = :data', '#ttl = :ttl']
+        set_updates = ["#data = :data", "#ttl = :ttl"]
         if must_create:
             # Set condition to ensure session with same key doesnt exist
-            update_kwargs['ConditionExpression'] = \
-                DynamoConditionAttr('session_key').not_exists()
-            attribute_values[':created'] = int(time.time())
-            set_updates.append('created = :created')
+            update_kwargs["ConditionExpression"] = DynamoConditionAttr(
+                "session_key"
+            ).not_exists()
+            attribute_values[":created"] = int(time.time())
+            set_updates.append("created = :created")
 
-        update_kwargs['UpdateExpression'] = 'SET ' + ','.join(set_updates)
-        update_kwargs['ExpressionAttributeValues'] = attribute_values
-        update_kwargs['ExpressionAttributeNames'] = attribute_names
+        update_kwargs["UpdateExpression"] = "SET " + ",".join(set_updates)
+        update_kwargs["ExpressionAttributeValues"] = attribute_values
+        update_kwargs["ExpressionAttributeNames"] = attribute_names
         try:
             session_size = len(session_data)
             start_time = time.time()
             response = self.table.update_item(**update_kwargs)
             duration = time.time() - start_time
-            retry_attempt = response['ResponseMetadata']['RetryAttempts']
-            request_id = response['ResponseMetadata']['RequestId']
-            newrelic.agent.record_custom_metric('Custom/DynamoDb/update_item_response',
-                                                duration)
-            newrelic.agent.record_custom_metric('Custom/DynamoDb/update_item_size',
-                                                session_size)
+            retry_attempt = response["ResponseMetadata"]["RetryAttempts"]
+            request_id = response["ResponseMetadata"]["RequestId"]
             self.session_bust_warning(session_size)
-            self.response_analyzing(session_size, duration, retry_attempt,
-                                    'update_item', request_id)
+            self.response_analyzing(
+                session_size, duration, retry_attempt, "update_item", request_id
+            )
 
         except ClientError as e:
-            error_code = e.response['Error']['Code']
-            if error_code == 'ConditionalCheckFailedException':
+            error_code = e.response["Error"]["Code"]
+            if error_code == "ConditionalCheckFailedException":
                 raise CreateError
             raise
 
-    @newrelic.agent.datastore_trace('DynamoDb', None, 'delete')
     def delete(self, session_key=None):
         """
         Deletes the current session, or the one specified in ``session_key``.
@@ -281,11 +260,7 @@ class SessionStore(SessionBase):
             if self.session_key is None:
                 return
             session_key = self.session_key
-        start_time = time.time()
-        self.table.delete_item(Key={'session_key': session_key})
-        newrelic.agent.record_custom_metric('Custom/DynamoDb/delete_item_response',
-                                            (time.time() - start_time))
-
+        self.table.delete_item(Key={"session_key": session_key})
 
     @classmethod
     def clear_expired(cls):
@@ -301,15 +276,19 @@ class SessionStore(SessionBase):
         :param size:
         :return:
         """
-        if size/1000 >= DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT:
-            logger.debug("session_size_warning",
-                         session_id=self.session_key, size=size/1000.0)
+        if size / 1000 >= DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT:
+            logger.debug(
+                "session_size_warning", session_id=self.session_key, size=size / 1000.0
+            )
 
-    def response_analyzing(self, size, duration, retry_attempt, operation_name, request_id):
+    def response_analyzing(
+        self, size, duration, retry_attempt, operation_name, request_id
+    ):
         if duration * 1000 >= 5:
-            newrelic.agent.add_custom_parameter('session_id', self.session_key)
-            newrelic.agent.add_custom_parameter('session_size', size)
-            newrelic.agent.add_custom_parameter('session_response_time', duration * 1000)
-            newrelic.agent.add_custom_parameter('dynamodb_retry_attempt', retry_attempt)
-            newrelic.agent.add_custom_parameter('dynamodb_request_id', request_id)
-            newrelic.agent.add_custom_parameter('session_operation_name', operation_name)
+            logger.debug(
+                "dynamodb_response_time - session_id: %s, response_time: %s, operation_name: %s, request_id: %s",
+                self.session_key,
+                duration * 1000.0,
+                operation_name,
+                request_id,
+            )

@@ -16,7 +16,7 @@ class SessionStore(DynamoDBStore):
     """
 
     def __init__(self, session_key=None):
-        super(SessionStore, self).__init__(session_key)
+        super().__init__(session_key)
 
     @property
     def cache_key(self):
@@ -25,7 +25,7 @@ class SessionStore(DynamoDBStore):
     def load(self):
         data = cache.get(self.cache_key, None)
         if data is None:
-            data = super(SessionStore, self).load()
+            data = super().load()
             if self.session_key is not None:
                 cache.set(self.cache_key, data, self.get_expiry_date())
         return data
@@ -33,14 +33,14 @@ class SessionStore(DynamoDBStore):
     def exists(self, session_key):
         if session_key and (KEY_PREFIX + session_key) in cache:
             return True
-        return super(SessionStore, self).exists(session_key)
+        return super().exists(session_key)
 
     def save(self, must_create=False):
-        super(SessionStore, self).save(must_create)
+        super().save(must_create)
         cache.set(self.cache_key, self._session, self.get_expiry_age())
 
     def delete(self, session_key=None):
-        super(SessionStore, self).delete(session_key)
+        super().delete(session_key)
         if session_key is None:
             if self.session_key is None:
                 return

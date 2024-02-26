@@ -1,4 +1,4 @@
 boto3
-django==1.11.1
-newrelic==3.2.1.93
-structlog==17.2.0
+django
+# newrelic==3.2.1.93
+# structlog==17.2.0

@@ -12,3 +12,4 @@ boto
 testapp/
 *.egg-info
 .venv
+_data/

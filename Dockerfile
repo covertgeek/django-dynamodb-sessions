@@ -1,2 +1,5 @@
-FROM python:2.7.13-onbuild
+FROM python:3.12-alpine
 
+RUN mkdir -p /usr/src/app
+
+WORKDIR /usr/src/app
