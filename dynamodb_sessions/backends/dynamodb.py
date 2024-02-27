@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 dynamo_kwargs = dict(
     service_name="dynamodb",
     config=BOTO_CORE_CONFIG,
-    region=DYNAMO_REGION_NAME,
+    region_name=DYNAMO_REGION_NAME,
 )
 
 if USE_LOCAL_DYNAMODB_SERVER:
