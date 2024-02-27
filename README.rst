@@ -102,6 +102,15 @@ The following settings may be used in your ``settings.py``:
 
 Changes
 -------
+0.9
+^^^
+* Updated to latest version of Django and Boto3.
+* Added support for Python 3.12.
+
+
+0.8
+^^^
+* Forked from django-dynamodb-sessions to add support for boto3 and Python 3.
 
 0.7
 ^^^
