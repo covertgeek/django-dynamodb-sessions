@@ -94,6 +94,7 @@ class SessionStore(SessionBase):
 
     def __init__(self, session_key=None):
         super(SessionStore, self).__init__(session_key)
+        logger.debug("SessionStore __init__ called with session_key: %s", session_key)
 
     def encode(self, session_dict):
         """
