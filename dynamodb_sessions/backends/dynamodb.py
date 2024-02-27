@@ -30,6 +30,7 @@ WRITE_CAPACITY_UNITS = getattr(settings, "DYNAMODB_WRITE_CAPACITY_UNITS", 123)
 DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT = getattr(
     settings, "DYNAMO_SESSION_DATA_SIZE_WARNING_LIMIT", 500
 )
+DYNAMO_REGION_NAME = getattr(settings, "DYNAMO_REGION_NAME", "us-west-2")
 
 # defensive programming if config has been defined
 # make sure it's the correct format.
@@ -43,7 +44,11 @@ _DYNAMODB_TABLE = None
 
 logger = logging.getLogger(__name__)
 
-dynamo_kwargs = dict(service_name="dynamodb", config=BOTO_CORE_CONFIG)
+dynamo_kwargs = dict(
+    service_name="dynamodb",
+    config=BOTO_CORE_CONFIG,
+    region=DYNAMO_REGION_NAME,
+)
 
 if USE_LOCAL_DYNAMODB_SERVER:
     local_dynamodb_server = "LOCAL_DYNAMODB_SERVER"
