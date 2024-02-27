@@ -108,7 +108,7 @@ class SessionStore(SessionBase):
 
     @property
     def table(self):
-        return dynamodb_table()
+        return boto3.resource(**dynamo_kwargs).Table(TABLE_NAME)
 
     def load(self):
         """
